@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { DeviceMotion } from 'expo-sensors';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { BackHandler, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
@@ -17,6 +17,7 @@ export default function HomeScreen() {
     const rotation = useSharedValue(0);
     const translateY = useSharedValue(0);
     const [pitch, setPitch] = useState(0);
+    const pitchRef = useRef(0);
     const [isManualControl, setIsManualControl] = useState(false);
 
     useEffect(() => {
@@ -30,6 +31,7 @@ export default function HomeScreen() {
                 // Convert to degrees: radians * (180 / Math.PI)
                 const pitchInDegrees = data.rotation.beta * (180 / Math.PI);
                 setPitch(pitchInDegrees);
+                pitchRef.current = pitchInDegrees;
             }
         });
 
@@ -41,35 +43,42 @@ export default function HomeScreen() {
 
         setIsFlipping(true);
 
-        const isHeads = isManualControl
-            ? parseFloat(pitch.toFixed(2)) > 0
-            : Math.random() < 0.5;
-
-        // Add 1440 (4 full spins) to the CURRENT rotation value
-        const baseSpins = 1440;
-        const currentPos = rotation.value;
-
-        // Calculate target: must land on a multiple of 360 for Heads, 
-        // or (multiple of 360) + 180 for Tails.
-        let targetValue = currentPos + baseSpins;
-        const remainder = targetValue % 360;
-
-        if (isHeads) {
-            targetValue = targetValue - remainder; // Align to 0/360
-        } else {
-            targetValue = targetValue - remainder + 180; // Align to 180
-        }
+        const upDuration = 1200;
+        const downDuration = 1200;
+        const totalDuration = upDuration + downDuration;
 
         // Toss up and down
-        translateY.value = withTiming(-300, { duration: 400 }, () => {
-            translateY.value = withTiming(0, { duration: 400 });
+        translateY.value = withTiming(-300, { duration: upDuration }, () => {
+            translateY.value = withTiming(0, { duration: downDuration });
         });
 
-        // Spin animation
-        rotation.value = withTiming(targetValue, { duration: 800 }, () => {
-            scheduleOnRN(setIsFlipping, false);
-            scheduleOnRN(setResult, isHeads ? 'HEADS' : 'TAILS');
-        });
+        // Start initial spin
+        const currentPos = rotation.value;
+        rotation.value = withTiming(currentPos + 3600, { duration: totalDuration });
+
+        // Decide the result at the apex of the toss so user can choose while in air
+        setTimeout(() => {
+            const isHeads = isManualControl
+                ? parseFloat(pitchRef.current.toFixed(2)) > 0
+                : Math.random() < 0.5;
+
+            // Calculate target value based on current mid-air rotation
+            const midPos = rotation.value;
+            let targetValue = midPos + 720; 
+            const remainder = targetValue % 360;
+
+            if (isHeads) {
+                targetValue = targetValue - remainder; // Align to 0/360
+            } else {
+                targetValue = targetValue - remainder + 180; // Align to 180
+            }
+
+            // Override spin animation to land on the chosen side
+            rotation.value = withTiming(targetValue, { duration: downDuration }, () => {
+                scheduleOnRN(setIsFlipping, false);
+                scheduleOnRN(setResult, isHeads ? 'HEADS' : 'TAILS');
+            });
+        }, upDuration);
     };
 
     const toggleManualControl = () => {
